@@ -1,11 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Management;
+using System.Linq;
 using System.Runtime.InteropServices;
-using System.Runtime.InteropServices.ComTypes;
 using System.Threading;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace WinGDSTesterFramework
@@ -16,11 +14,9 @@ namespace WinGDSTesterFramework
         private PerformanceCounter switchCounter;
         private Stopwatch stopwatch;
         private Process us;
-        private long lastCpuTimeSample;
         private float lastGCSSample;
         private long lastTimeSample;
         private ulong lastCyclesSample;
-        private ManagementObject usPerf;
 
         //private IntPtr originalAffinity;
 
@@ -34,14 +30,10 @@ namespace WinGDSTesterFramework
             //Doesnt work, just gives 15, which is the first 4 cores.
             //originalAffinity = Process.GetCurrentProcess().ProcessorAffinity;
             backgroundCS = new PerformanceCounter("System", "Context Switches/sec", "");
-            backgroundCS.NextSample();
+            backgroundCS.NextValue();
             switchCounter = new PerformanceCounter("System", "Context Switches/sec", "");//slow call.
             stopwatch = new Stopwatch();
             us = Process.GetCurrentProcess();
-            var mos = new ManagementObjectSearcher("SELECT * FROM Win32_Process where Handle = " + us.Id);
-            foreach (ManagementObject obj in mos.Get()) { usPerf = obj; break; }
-            //usPerf.Get();
-
         }
 
         private void button1_Click(object sender, EventArgs e)
@@ -50,7 +42,7 @@ namespace WinGDSTesterFramework
             var rnd = new Random();
             for (var i = 0; i < 15000; i++)
             {
-                listBox1.Items.Add(rnd.NextDouble().ToString());
+                listView1.Items.Add(rnd.NextDouble().ToString());
             }
 
             button1.Text = (DateTime.Now - start).ToString();
@@ -59,6 +51,10 @@ namespace WinGDSTesterFramework
         
         private void SwitchTest(int iters, int cores)
         {
+            //Adding more thread local data doesn't have that much of an effect
+            var threadMemSize = (int)numericUpDown2.Value * 1024;
+            var jmpSize = (int)numericUpDown2.Value * 64;
+            var rnd = new Random();
             var m = cores;
             var t = m*2;
             var muts = new List<Mutex>();
@@ -69,12 +65,15 @@ namespace WinGDSTesterFramework
             {
                 var nt = new Thread((param) =>
                 {
-                    var tid = (int)param;
-                    var mut = muts[tid % m];
+                    var bytes = Enumerable.Repeat((byte)0x20, threadMemSize).ToArray();
+                    //var tid = (int)param;
+                    //var mut = muts[tid % m];
                     for (var j = 0; j < iters; j++)
                     {
-                        mut.WaitOne();
-                        mut.ReleaseMutex();
+                        muts[(int)param % m].WaitOne();
+                        for (var z = 0; z < threadMemSize; z += jmpSize)
+                            bytes[ z] = (byte)iters;
+                        muts[(int)param % m].ReleaseMutex();
                     }
                 });
                 nt.Priority = ThreadPriority.AboveNormal;
@@ -83,10 +82,6 @@ namespace WinGDSTesterFramework
 
             ulong beginCycles, endCycles;
 
-            //these values arent refreshing.
-            var mos = new ManagementObjectSearcher("SELECT * FROM Win32_Process where Handle = " + us.Id);
-            foreach (ManagementObject obj in mos.Get()) { usPerf = obj; break; }
-            var beginCpuTime = (ulong)usPerf.Properties["KernelModeTime"].Value + (ulong)usPerf.Properties["UserModeTime"].Value;
             stopwatch.Restart();
             switchCounter.NextValue();
             QueryProcessCycleTime(us.Handle, out beginCycles);
@@ -95,17 +90,13 @@ namespace WinGDSTesterFramework
             for (var i = 0; i < t; i++)
                 ts[i].Join();
 
-            //Dont do this under the debugger.
+            //Pure clock tester. Dont do this under the debugger.
             //var k= 0;
             //for(ulong p = 0; p < (ulong)int.MaxValue*3; p++) { k++; }
             
             QueryProcessCycleTime(us.Handle, out endCycles);
             lastGCSSample = switchCounter.NextValue();
             lastTimeSample = stopwatch.ElapsedMilliseconds;
-
-            mos = new ManagementObjectSearcher("SELECT * FROM Win32_Process where Handle = " + us.Id);
-            foreach (ManagementObject obj in mos.Get()) { usPerf = obj; break; }
-            lastCpuTimeSample = (long)((ulong)usPerf.Properties["KernelModeTime"].Value + (ulong)usPerf.Properties["UserModeTime"].Value) - (long)beginCpuTime;
             
             lastCyclesSample = endCycles - beginCycles;
 
@@ -128,22 +119,20 @@ namespace WinGDSTesterFramework
             {
                 SwitchTest( iters, cores);
 
-                //This figure is some how half as much as it should be when we select the first 4 CPUs (on a 5600)
-                var cpuPercent = (lastCpuTimeSample / (long)lastTimeSample)/100.0;
-
                 var globalCSpersec = (long)lastGCSSample;
                 
                 //There were 2 threads runing a loop of 'iter' count, so total calls was 2x
                 iters = iters * 2 * cores;
 
                 var totalGCS = (globalCSpersec * lastTimeSample) /1000;
+                var ghzUsed = (lastCyclesSample / (ulong)lastTimeSample) / 1000000.0 ;
 
                 var listItem = new ListViewItem( iters/1000 + "k");
                 listItem.SubItems.Add(globalCSpersec.ToString("#,##0"));
                 listItem.SubItems.Add((iters / lastTimeSample).ToString("#,##0"));
                 listItem.SubItems.Add((lastCyclesSample / (ulong)iters).ToString("#,##0"));
                 listItem.SubItems.Add(((double)totalGCS/iters).ToString("#,##0.###"));
-                listItem.SubItems.Add(cpuPercent.ToString("0.###"));
+                listItem.SubItems.Add(ghzUsed.ToString("0.###ghz"));
                 ResultsList.Items.Add(listItem);
                 
             };
