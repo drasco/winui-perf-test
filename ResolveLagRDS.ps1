@@ -1,5 +1,5 @@
 #Use a random core choice per session, for RDS systems with many users
-#obviously new procs will need an affinity re-apllied, perhaps set a 30min re-run.
+#New procs may  need an affinity re-apllied, perhaps set a 30min re-run, but they may also inherit their affinity.
 $threadCount = [int](Get-CimInstance -ClassName 'Win32_Processor' | Measure-Object -Sum -Property NumberOfLogicalProcessors).Sum
 $coreChoice = (Get-Random -Minimum 0 -Maximum $threadCount);
 
