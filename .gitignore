@@ -2,3 +2,6 @@
 LazerusGDITest/LazerusGDITest.exe
 /LazerusGDITest/lib
 /LazerusGDITest/backup
+/WinGDITesterFramework/.vs
+/WinGDITesterFramework/bin
+/WinGDITesterFramework/obj
